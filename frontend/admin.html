@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Dashboard</title>
+  <style>
+    :root {
+      --bg:#f6f8fa;--card:#fff;--accent:#0366d6;--muted:#666;
+      --danger:#d73a49;--ok:#28a745
+    }
+    body {
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      margin:0;background:var(--bg);color:#111
+    }
+    .container {
+      max-width:1100px;margin:28px auto;padding:20px;
+      background:var(--card);border-radius:8px;
+      box-shadow:0 6px 18px rgba(0,0,0,0.06)
+    }
+    h1{margin:0 0 6px;font-size:22px}
+    .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:16px}
+    .card{background:#fff;border:1px solid #eee;border-radius:8px;padding:12px}
+    label{display:block;margin:8px 0 4px;font-weight:600}
+    input,textarea,select{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box}
+    .row{display:flex;gap:8px;align-items:center}
+    button{padding:8px 10px;border-radius:6px;border:0;background:var(--accent);color:#fff;cursor:pointer}
+    button.secondary{background:#666}
+    button.danger{background:var(--danger)}
+    .muted{color:var(--muted);font-size:13px}
+    .list{max-height:360px;overflow:auto;margin-top:8px}
+    .item{display:flex;justify-content:space-between;align-items:flex-start;padding:8px;border-bottom:1px solid #f2f6fb}
+    .meta{color:var(--muted);font-size:13px}
+    .analytics-item{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #f0f0f0}
+    .msg{margin-top:8px;height:20px;color:var(--danger)}
+    .small{font-size:13px;color:#444}
+    /* seat modal */
+    .seat-modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:1000;}
+    .seat-panel{width:820px;max-width:95%;background:#fff;border-radius:8px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,0.25);}
+    .seat-panel h4{margin:0 0 8px}
+    .seat-grid{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;padding:6px 0;}
+    .seat-row{display:flex;align-items:center}
+    .seat-row-label{width:36px;font-weight:700;color:#333;margin-right:8px}
+    .seat-chip{min-width:36px;height:36px;border-radius:6px;margin-right:6px;border:1px solid #ddd;display:inline-flex;align-items:center;justify-content:center;font-size:13px}
+    .seat-available{background:#e6ffed;color:#0b6623;border-color:#9ee6b8}
+    .seat-booked{background:#fdecea;color:#9a1f1f;border-color:#f5b2b2}
+    .seat-empty{background:#fafafa;color:#bbb;border-color:#eee}
+    .seat-legend{display:flex;gap:12px;margin-top:8px;align-items:center}
+    .legend-item{display:flex;gap:8px;align-items:center}
+    .legend-box{width:18px;height:18px;border-radius:4px;border:1px solid #ddd}
+    .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+  </style>
+</head>
+<body>
+  <main class="container" role="main">
+    <div class="topbar">
+      <div>
+        <h1>Admin Dashboard</h1>
+        <div class="small">Manage movies, showtimes, bookings & analytics</div>
+      </div>
+      <div class="row">
+        <button id="refresh">Refresh</button>
+        <button id="logout" class="secondary">Logout</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h3>Add Movie</h3>
+          <label>Title</label>
+          <input id="movie-title" type="text" />
+          <label>Description</label>
+          <textarea id="movie-desc" rows="3"></textarea>
+          <label>Base Price</label>
+          <input id="movie-price" type="number" step="0.01" />
+          <div style="margin-top:8px" class="row">
+            <button id="add-movie">Add Movie</button>
+            <span id="movie-msg" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Add Showtime</h3>
+          <label>Movie</label>
+          <select id="show-movie"></select>
+          <label>Start (local)</label>
+          <input id="show-start" type="datetime-local" />
+          <label>Price (optional)</label>
+          <input id="show-price" type="number" step="0.01" />
+          <div style="margin-top:8px" class="row">
+            <button id="add-show">Add Showtime</button>
+            <span id="show-msg" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Movies</h3>
+          <div id="movies-list" class="list muted">Loading…</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Showtimes (selected movie)</h3>
+          <div id="showtimes-list" class="list muted">Select a movie to view showtimes</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>Analytics</h3>
+          <div id="analytics" class="muted">Loading…</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Recent Bookings</h3>
+          <div id="bookings-list" class="list muted">Loading…</div>
+        </div>
+      </div>
+    </div>
+    <div class="msg" id="global-msg"></div>
+  </main>
+
+  <!-- seat modal -->
+  <div id="seat-modal" class="seat-modal" style="display:none" aria-hidden="true">
+    <div class="seat-panel" role="dialog" aria-modal="true">
+      <h4 id="seat-title">Showtime Seats</h4>
+      <div id="seat-meta" class="small muted" style="margin-bottom:8px"></div>
+      <div id="seat-grid" class="seat-grid"></div>
+      <div class="seat-legend">
+        <div class="legend-item"><div class="legend-box" style="background:#e6ffed;border-color:#9ee6b8"></div><div class="small">Available</div></div>
+        <div class="legend-item"><div class="legend-box" style="background:#fdecea;border-color:#f5b2b2"></div><div class="small">Booked</div></div>
+        <div class="legend-item"><div class="legend-box" style="background:#fafafa;border-color:#eee"></div><div class="small">Empty</div></div>
+      </div>
+      <div class="modal-actions">
+        <button id="close-seat-modal" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const API_BASE = "https://5rylnhcn8k.execute-api.us-east-1.amazonaws.com";
+    const token = localStorage.getItem('token');
+    const role = localStorage.getItem('role');
+    if (!token || role !== 'admin') { location.href = 'index.html'; return; }
+
+    const el = id => document.getElementById(id);
+    const movieTitle = el('movie-title'), movieDesc = el('movie-desc'), moviePrice = el('movie-price');
+    const showMovie = el('show-movie'), showStart = el('show-start'), showPrice = el('show-price');
+    const movieMsg = el('movie-msg'), showMsg = el('show-msg'), moviesList = el('movies-list'), showtimesList = el('showtimes-list');
+    const analyticsEl = el('analytics'), bookingsList = el('bookings-list'), globalMsg = el('global-msg');
+    const seatModal = el('seat-modal'), seatGrid = el('seat-grid'), seatMeta = el('seat-meta'), seatTitle = el('seat-title');
+    const refresh = el('refresh'), logout = el('logout');
+
+    const headers = ()=>({ 'Content-Type':'application/json', 'Authorization':'Bearer '+token });
+    const api = async (path, opts={})=>{
+      const res = await fetch(API_BASE+path, opts);
+      let data = {};
+      try { data = await res.json(); } catch {}
+      return { ok:res.ok, status:res.status, data };
+    };
+
+    function setMsg(elm, txt, ok){ elm.textContent = txt; elm.style.color = ok ? 'green':'red'; setTimeout(()=>{elm.textContent='';},3000); }
+    function setGlobal(msg, ok){ globalMsg.textContent = msg; globalMsg.style.color = ok?'green':'red'; setTimeout(()=>{globalMsg.textContent='';},4000); }
+
+    function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+    async function loadMovies(){
+      const r = await api('/movies',{headers:headers()});
+      if(!r.ok){moviesList.textContent='Failed to load';return;}
+      const movies = r.data.movies||r.data||[];
+      moviesList.innerHTML=''; showMovie.innerHTML='<option value="">Select movie</option>';
+      if(!movies.length){moviesList.textContent='No movies';return;}
+      movies.forEach(m=>{
+        const id=m.movie_id||m.id; const title=m.title;
+        const div=document.createElement('div'); div.className='item';
+        div.innerHTML=`<div><b>${escapeHtml(title)}</b><div class="meta">${escapeHtml(m.description||'')}</div><div class="meta">Base price: ${m.base_price??'-'}</div></div>`;
+        const right=document.createElement('div'); right.style.display='flex'; right.style.gap='6px';
+        const btn=document.createElement('button'); btn.textContent='Showtimes'; btn.onclick=()=>loadShowtimesFor(id,title);
+        const del=document.createElement('button'); del.textContent='Delete'; del.className='danger'; del.onclick=()=>deleteMovie(id);
+        right.appendChild(btn); right.appendChild(del); div.appendChild(right); moviesList.appendChild(div);
+        const opt=document.createElement('option'); opt.value=id; opt.textContent=title; showMovie.appendChild(opt);
+      });
+    }
+
+    async function addMovie(){
+      if(!movieTitle.value.trim()) return setMsg(movieMsg,'Title required');
+      const body={ title:movieTitle.value.trim(), description:movieDesc.value.trim(), base_price:Number(moviePrice.value)||0 };
+      const r=await api('/movies',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+      if(r.ok){setMsg(movieMsg,'Movie added',true);movieTitle.value='';movieDesc.value='';moviePrice.value='';loadMovies();loadAnalytics();}
+      else setMsg(movieMsg,r.data.error||'Failed');
+    }
+
+    async function deleteMovie(id){
+      if(!confirm('Delete this movie?'))return;
+      const r=await api('/movies/'+id,{method:'DELETE',headers:headers()});
+      if(r.ok){setGlobal('Deleted',true);loadMovies();loadAnalytics();}
+      else setGlobal('Delete failed');
+    }
+
+    async function addShow(){
+      const movieId=showMovie.value;
+      if(!movieId)return setMsg(showMsg,'Select movie');
+      if(!showStart.value)return setMsg(showMsg,'Start required');
+      const dt=new Date(showStart.value);
+      const show_date=dt.toISOString().split('T')[0];
+      const show_time=dt.toTimeString().slice(0,5);
+      const body={ movie_id:movieId, show_date, show_time, price:Number(showPrice.value)||undefined };
+      const r=await api('/showtimes',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+      if(r.ok){setMsg(showMsg,'Showtime added',true);showStart.value='';showPrice.value='';loadShowtimesFor(movieId);}
+      else setMsg(showMsg,r.data.error||'Failed');
+    }
+
+    async function loadShowtimesFor(movieId, movieTitle){
+      const r=await api('/showtimes/'+movieId,{headers:headers()});
+      if(!r.ok){showtimesList.textContent='Failed';return;}
+      const list=r.data.showtimes||r.data||[];
+      showtimesList.innerHTML='';
+      if(!list.length){showtimesList.textContent='No showtimes';return;}
+      list.forEach(s=>{
+        const id=s.showtime_id||s.id; const disp=s.show_date+' '+s.show_time;
+        const d=document.createElement('div'); d.className='item';
+        d.innerHTML=`<div><b>${escapeHtml(disp)}</b><div class="meta">Price: ${s.price??'-'}</div></div>`;
+        const right=document.createElement('div'); right.style.display='flex'; right.style.gap='6px';
+        const v=document.createElement('button'); v.textContent='View Seats'; v.onclick=()=>openSeatModal(s,movieTitle,disp);
+        const del=document.createElement('button'); del.textContent='Delete'; del.className='danger'; del.onclick=()=>deleteShowtime(id);
+        right.appendChild(v); right.appendChild(del); d.appendChild(right); showtimesList.appendChild(d);
+      });
+    }
+
+    async function deleteShowtime(id){
+      if(!confirm('Delete this showtime?'))return;
+      const r=await api('/showtimes/'+id,{method:'DELETE',headers:headers()});
+      if(r.ok){setGlobal('Showtime deleted',true);loadAnalytics();}
+      else setGlobal('Delete failed');
+    }
+
+    function openSeatModal(s, title, disp){
+      seatTitle.textContent=title+' — '+disp;
+      const seats=s.seats||[];
+      seatGrid.innerHTML='';
+      if(!seats.length){seatGrid.innerHTML='<div class="muted">No seat data</div>';seatMeta.textContent='';seatModal.style.display='flex';return;}
+      const rows={}; let max=0;
+      seats.forEach(se=>{const row=se.row_label||se.row||'R';const n=Number(se.seat_number||0);if(!rows[row])rows[row]={};rows[row][n]=se;max=Math.max(max,n);});
+      Object.keys(rows).sort().forEach(rk=>{
+        const row=document.createElement('div');row.className='seat-row';
+        const lab=document.createElement('div');lab.className='seat-row-label';lab.textContent=rk;row.appendChild(lab);
+        for(let i=1;i<=max;i++){const seat=rows[rk][i];const c=document.createElement('div');c.className='seat-chip';
+          if(!seat)c.classList.add('seat-empty');
+          else if(seat.is_booked||seat.booked)c.classList.add('seat-booked');
+          else c.classList.add('seat-available');
+          c.textContent=seat?.seat_label||i;row.appendChild(c);}
+        seatGrid.appendChild(row);
+      });
+      seatMeta.textContent=`Total seats: ${seats.length}`;
+      seatModal.style.display='flex';
+    }
+
+    el('close-seat-modal').onclick=()=>seatModal.style.display='none';
+    seatModal.onclick=e=>{if(e.target===seatModal)seatModal.style.display='none';};
+
+    async function loadBookings(){
+      const r=await api('/bookings',{headers:headers()});
+      if(!r.ok){bookingsList.textContent='Failed';return;}
+      const list=r.data.bookings||r.data||[];
+      bookingsList.innerHTML='';
+      if(!list.length){bookingsList.textContent='No bookings';return;}
+      list.slice(0,50).forEach(b=>{
+        const id=b.booking_id||b.id;
+        const div=document.createElement('div');div.className='item';
+        div.innerHTML=`<div><b>${id}</b><div class="meta">User: ${b.user_email||b.user_id} — Amount: ${b.amount}</div><div class="meta">Seats: ${b.seats?.join(', ')}</div></div>`;
+        const right=document.createElement('div');right.style.display='flex';right.style.gap='6px';
+        const c=document.createElement('button');c.textContent='Cancel';c.className='danger';c.onclick=()=>cancelBooking(id);
+        right.appendChild(c);div.appendChild(right);bookingsList.appendChild(div);
+      });
+    }
+
+    async function cancelBooking(id){
+      if(!confirm('Cancel booking?')) return;
+      const r = await api('/cancel/' + encodeURIComponent(id), { method: 'DELETE', headers: headers() });
+      if (r.ok) {
+        setGlobal('Booking cancelled', true);
+        await loadBookings();
+        await loadAnalytics();
+      } else {
+        setGlobal('Cancel failed: ' + ((r.data && (r.data.error || r.data.message)) || r.status));
+      }
+    }
+
+    async function loadAnalytics(){
+      const r = await api('/analytics', { headers: headers() });
+      if(!r.ok){ analyticsEl.textContent = 'Failed to load analytics'; return; }
+      const a = r.data || {};
+      analyticsEl.innerHTML = '';
+
+      const rows = [
+        ['Total Bookings', a.totalBookings ?? a.total_bookings ?? 0],
+        ['Total Sales', a.totalSales ?? a.total_sales ?? a.total ?? 0],
+        ['Top Customer', (a.topCustomer && (a.topCustomer.name || a.topCustomer.email)) || (a.top_customer && a.top_customer.name) || '-'],
+        ['Highest Booking', (a.highestBooking && (a.highestBooking.booking_id || a.highestBooking.bookingId)) || '-'],
+        ['Top Movie', (a.topMovie && (a.topMovie.title || a.topMovie.name)) || '-']
+      ];
+
+      rows.forEach(rw => {
+        const div = document.createElement('div');
+        div.className = 'analytics-item';
+        div.innerHTML = `<div>${escapeHtml(rw[0])}</div><div><strong>${escapeHtml(String(rw[1] ?? '-'))}</strong></div>`;
+        analyticsEl.appendChild(div);
+      });
+
+      // Optional: show highest booking details if present
+      if (a.highestBooking && typeof a.highestBooking === 'object') {
+        const hb = a.highestBooking;
+        const card = document.createElement('div');
+        card.className = 'hb-card';
+        function addLine(k, v) {
+          const row = document.createElement('div');
+          row.className = 'hb-row';
+          const key = document.createElement('div');
+          key.className = 'hb-key';
+          key.textContent = k;
+          const val = document.createElement('div');
+          val.className = 'hb-val';
+          val.innerHTML = v;
+          row.appendChild(key);
+          row.appendChild(val);
+          card.appendChild(row);
+        }
+        addLine('Booking ID', escapeHtml(hb.booking_id ?? hb.bookingId ?? ''));
+        addLine('User ID', escapeHtml(String(hb.user_id ?? hb.userId ?? '')));
+        addLine('Showtime ID', escapeHtml(String(hb.showtime_id ?? hb.showtimeId ?? '')));
+        const seatsVal = (Array.isArray(hb.seats) && hb.seats.length) ? hb.seats.map(s => `<span class="seat-chip">${escapeHtml(String(s))}</span>`).join(' ') : '-';
+        addLine('Seats', seatsVal);
+        addLine('Amount', escapeHtml(String(hb.amount ?? '')));
+        addLine('Booked At', escapeHtml(hb.created_at ?? hb.createdAt ?? ''));
+        analyticsEl.appendChild(card);
+      }
+    }
+
+    // wire UI events
+    el('add-movie').addEventListener('click', addMovie);
+    el('add-show').addEventListener('click', addShow);
+    refresh.addEventListener('click', async () => { await loadMovies(); await loadAnalytics(); await loadBookings(); });
+    logout.addEventListener('click', () => { localStorage.removeItem('token'); localStorage.removeItem('role'); location.href = 'index.html'; });
+
+    // when selecting from the dropdown, load showtimes for that movie
+    showMovie.addEventListener('change', (e) => {
+      const id = e.target.value;
+      const title = e.target.selectedIndex > -1 ? e.target.options[e.target.selectedIndex].text : '';
+      if (id) {
+        // we pass both id and title to loadShowtimesFor so the seat modal can show a human title
+        loadShowtimesFor(id, title);
+      } else {
+        showtimesList.innerHTML = '<div class="muted">Select a movie to view showtimes</div>';
+      }
+    });
+
+    // initial load
+    (async function init(){
+      try {
+        await loadMovies();
+        await loadAnalytics();
+        await loadBookings();
+      } catch (err) {
+        console.error('Init error', err);
+        setGlobal('Failed to initialize dashboard', false);
+      }
+    })();
+
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Movie Booking - Login / Register</title>
+  <style>
+    :root{--bg:#f6f8fa;--card:#fff;--accent:#0366d6;--danger:#d73a49;--ok:#28a745}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:var(--bg);color:#111}
+    .container{max-width:420px;margin:48px auto;padding:20px;background:var(--card);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.06)}
+    h1{margin:0 0 12px;font-size:20px;text-align:center}
+    .segment-switch{display:flex;gap:8px;margin-bottom:12px}
+    .segment-switch button{flex:1;padding:8px;border:1px solid #ddd;background:#fff;cursor:pointer}
+    .segment-switch button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .segment{display:block}
+    .hidden{display:none}
+    label{display:block;margin:8px 0;font-size:14px}
+    input{width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box}
+    button.action{padding:10px 12px;border:0;background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;width:100%}
+    .message{margin-top:12px;color:var(--danger);min-height:20px}
+    .small{font-size:13px;color:#444;margin-top:8px;text-align:center}
+  </style>
+</head>
+<body>
+  <main class="container" role="main">
+    <h1>Movie Booking</h1>
+
+    <div class="segment-switch" role="tablist" aria-label="auth switch">
+      <button id="show-login" class="active" aria-controls="login-segment">Login</button>
+      <button id="show-register" aria-controls="register-segment">Register</button>
+    </div>
+
+    <section id="login-segment" class="segment" aria-hidden="false">
+      <h2 style="margin:0 0 8px">Login</h2>
+      <label>Email<input id="login-email" type="email" autocomplete="username" /></label>
+      <label>Password<input id="login-password" type="password" autocomplete="current-password" /></label>
+      <button id="login-button" class="action">Login</button>
+      <div class="small">Don't have an account? Click Register</div>
+    </section>
+
+    <section id="register-segment" class="segment hidden" aria-hidden="true">
+      <h2 style="margin:0 0 8px">Register</h2>
+      <label>Name<input id="register-name" type="text" autocomplete="name" /></label>
+      <label>Email<input id="register-email" type="email" autocomplete="email" /></label>
+      <label>Password<input id="register-password" type="password" autocomplete="new-password" /></label>
+      <button id="register-button" class="action">Register</button>
+      <div class="small">Already have an account? Click Login</div>
+    </section>
+
+    <div id="message" class="message" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    (function(){
+      const API_BASE = "https://5rylnhcn8k.execute-api.us-east-1.amazonaws.com";
+      const el = id => document.getElementById(id);
+      const showLogin = el('show-login');
+      const showRegister = el('show-register');
+      const loginSeg = el('login-segment');
+      const regSeg = el('register-segment');
+      const msg = el('message');
+
+      function setSegment(loginVisible){
+        if (loginVisible) {
+          showLogin.classList.add('active'); showRegister.classList.remove('active');
+          loginSeg.classList.remove('hidden'); loginSeg.setAttribute('aria-hidden','false');
+          regSeg.classList.add('hidden'); regSeg.setAttribute('aria-hidden','true');
+        } else {
+          showRegister.classList.add('active'); showLogin.classList.remove('active');
+          regSeg.classList.remove('hidden'); regSeg.setAttribute('aria-hidden','false');
+          loginSeg.classList.add('hidden'); loginSeg.setAttribute('aria-hidden','true');
+        }
+        msg.textContent = '';
+      }
+
+      // redirect if already logged in
+      const token = localStorage.getItem('token');
+      const role = localStorage.getItem('role');
+      if (token && role) {
+        if (role === 'admin') location.href = 'admin.html';
+        else if (role === 'staff') location.href = 'staff.html';
+        else location.href = 'user.html';
+      }
+
+      showLogin.addEventListener('click', () => setSegment(true));
+      showRegister.addEventListener('click', () => setSegment(false));
+
+      async function doLogin(){
+        msg.textContent = '';
+        const email = el('login-email').value.trim();
+        const password = el('login-password').value;
+        if (!email || !password) { msg.textContent = 'Enter email and password'; return; }
+        try {
+          const res = await fetch(API_BASE + '/login', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json().catch(()=>({}));
+          if (res.ok && data.token) {
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('role', data.role || 'user');
+            if (data.role === 'admin') location.href = 'admin.html';
+            else if (data.role === 'staff') location.href = 'staff.html';
+            else location.href = 'user.html';
+          } else {
+            msg.textContent = data.error || ('Login failed (' + res.status + ')');
+          }
+        } catch (e) {
+          console.error(e);
+          msg.textContent = 'Network error';
+        }
+      }
+
+      async function doRegister(){
+        msg.textContent = '';
+        const name = el('register-name').value.trim();
+        const email = el('register-email').value.trim();
+        const password = el('register-password').value;
+        if (!name || !email || !password) { msg.textContent = 'Fill all fields'; return; }
+        try {
+          const res = await fetch(API_BASE + '/register', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ name, email, password })
+          });
+          const data = await res.json().catch(()=>({}));
+          if (res.ok) {
+            msg.style.color = 'var(--ok)';
+            msg.textContent = 'Registered successfully. Please login.';
+            setSegment(true);
+          } else {
+            msg.style.color = '';
+            msg.textContent = data.error || ('Register failed (' + res.status + ')');
+          }
+        } catch (e) {
+          console.error(e);
+          msg.textContent = 'Network error';
+        }
+      }
+
+      el('login-button').addEventListener('click', doLogin);
+      el('register-button').addEventListener('click', doRegister);
+
+      // allow Enter key to submit within inputs
+      ['login-email','login-password'].forEach(id=>{
+        el(id).addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+      });
+      ['register-name','register-email','register-password'].forEach(id=>{
+        el(id).addEventListener('keydown', e=>{ if(e.key==='Enter') doRegister(); });
+      });
+
+    })();
+  </script>
+</body>
+</html>

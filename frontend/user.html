@@ -1,0 +1,549 @@
+<!-- ...existing code... -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>User — Movies & Booking</title>
+  <style>
+    :root{--bg:#f6f8fa;--card:#fff;--accent:#0366d6;--muted:#666;--ok:#28a745;--danger:#d73a49}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:var(--bg);color:#111}
+    .container{max-width:1000px;margin:28px auto;padding:18px;background:var(--card);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.06)}
+    h1{margin:0 0 12px;font-size:22px}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:16px}
+    .card{background:#fff;border:1px solid #eee;border-radius:8px;padding:12px}
+    .list{max-height:520px;overflow:auto}
+    .item{padding:10px;border-bottom:1px solid #f2f6fb;display:flex;justify-content:space-between;align-items:center}
+    .meta{color:var(--muted);font-size:13px}
+    button{padding:8px 10px;border-radius:6px;border:0;background:var(--accent);color:#fff;cursor:pointer}
+    button.ghost{background:#f3f6fb;color:#0366d6;border:1px solid #e6eef8}
+    .muted{color:var(--muted)}
+    .msg{height:22px;margin-top:8px;color:var(--danger)}
+    .seat-modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:1000}
+    .panel{width:840px;max-width:96%;background:#fff;border-radius:8px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,0.25)}
+    .seat-grid{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto;padding:6px 0}
+    .seat-row{display:flex;align-items:center}
+    .seat-row-label{width:36px;font-weight:700;color:#333;margin-right:8px}
+    .seat-chip{min-width:36px;height:36px;border-radius:6px;margin-right:6px;border:1px solid #ddd;display:inline-flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;background:#fafafa}
+    .seat-available{background:#e6ffed;color:#0b6623;border-color:#9ee6b8}
+    .seat-booked{background:#fdecea;color:#9a1f1f;border-color:#f5b2b2;cursor:not-allowed}
+    .seat-selected{outline:3px solid rgba(3,102,214,0.18); background:#e8f1ff !important; border-color:#cde0ff !important}
+    .modal-actions{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+    .qr{display:block;margin-top:8px}
+    .booking-ticket{background:#fbfcff;border:1px solid #e6eef8;padding:10px;border-radius:6px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <main class="container" role="main">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>
+        <h1>Movies — Book a Show</h1>
+        <div class="muted">Select movie → choose showtime → pick seats → book</div>
+      </div>
+      <div>
+        <button id="logout" class="ghost">Logout</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h3>Available Movies</h3>
+          <div id="movies-list" class="list muted">Loading movies…</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Showtimes</h3>
+          <div id="showtimes-list" class="list muted">Select a movie to view showtimes</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>Your Bookings</h3>
+          <div id="bookings-list" class="list muted">Loading bookings…</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Last Action</h3>
+          <div id="last-action" class="muted">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="msg" class="msg"></div>
+  </main>
+
+  <!-- Seat modal -->
+  <div id="seat-modal" class="seat-modal" style="display:none" aria-hidden="true">
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="seat-panel-title">
+      <h3 id="seat-panel-title">Select Seats</h3>
+      <div id="seat-meta" class="muted" style="margin-bottom:8px"></div>
+      <div id="seat-grid" class="seat-grid" role="region" aria-live="polite"></div>
+      <div class="modal-actions">
+        <div><strong id="selected-count">0</strong> selected</div>
+        <div>
+          <button id="book-btn">Book selected</button>
+          <button id="close-seat" class="ghost">Close</button>
+        </div>
+      </div>
+      <div id="booking-result" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const API_BASE = "https://5rylnhcn8k.execute-api.us-east-1.amazonaws.com";
+    const token = localStorage.getItem("token");
+    const role = localStorage.getItem("role");
+    if (!token || role !== "user") { location.href = "index.html"; return; }
+
+    const el = id => document.getElementById(id);
+    const moviesList = el('movies-list'), showtimesList = el('showtimes-list');
+    const bookingsList = el('bookings-list'), lastAction = el('last-action'), msg = el('msg');
+    const seatModal = el('seat-modal'), seatGrid = el('seat-grid'), seatMeta = el('seat-meta');
+    const selectedCount = el('selected-count'), bookBtn = el('book-btn'), closeSeat = el('close-seat'), bookingResult = el('booking-result');
+    const logout = el('logout');
+
+    function setMsg(t, ok){ msg.textContent = t||''; msg.style.color = ok ? 'var(--ok)' : 'var(--danger)'; if(t) setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; },4000); }
+    function headers(){ return { 'Content-Type':'application/json', 'Authorization':'Bearer ' + token }; }
+    async function api(path, opts){ const res = await fetch(API_BASE + path, opts); const text = await res.text().catch(()=>''); let data = text; try { data = JSON.parse(text || '{}'); } catch(e){} return { ok: res.ok, status: res.status, data }; }
+
+    // Helpers
+    function escape(s){ if (s===null||s===undefined) return ''; return String(s).replace(/[&<>"'`=\/]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'})[ch]); }
+    function qrSrc(payload, size=200){ return 'https://chart.googleapis.com/chart?cht=qr&chs=' + size + 'x' + size + '&chl=' + encodeURIComponent(payload); }
+
+    // State for seat selection
+    let currentShowtime = null;
+    let selectedSeatIds = [];
+
+    // Load movies
+    async function loadMovies(){
+      moviesList.textContent = 'Loading...';
+      const r = await api('/movies', { method:'GET', headers: headers() });
+      if (!r.ok) { moviesList.textContent = 'Failed to load movies'; return; }
+      const movies = Array.isArray(r.data) ? r.data : (r.data.movies || []);
+      if (!movies.length) { moviesList.innerHTML = '<div class="muted">No movies available</div>'; return; }
+      moviesList.innerHTML = '';
+      movies.forEach(m=>{
+        const id = m.movie_id || m.id || '';
+        const title = m.title || m.name || '(untitled)';
+        const div = document.createElement('div'); div.className='item';
+        div.innerHTML = `<div><div style="font-weight:700">${escape(title)}</div><div class="meta">Price: ${escape(m.price ?? m.base_price ?? '-')}</div></div>`;
+        const right = document.createElement('div');
+        const btn = document.createElement('button'); btn.textContent = 'Showtimes'; btn.onclick = ()=> loadShowtimesFor(id, title);
+        right.appendChild(btn); div.appendChild(right); moviesList.appendChild(div);
+      });
+    }
+
+    // Load showtimes for movie (movie_id or title)
+    async function loadShowtimesFor(movieId, movieTitle){
+      showtimesList.textContent = 'Loading showtimes...';
+      if (!movieId) { showtimesList.textContent = 'Movie id missing'; return; }
+      const r = await api('/showtimes/' + encodeURIComponent(movieId), { method:'GET', headers: headers() });
+      if (!r.ok) { showtimesList.textContent = (r.data && (r.data.error||r.data.message)) || 'Failed to load showtimes'; return; }
+      const list = Array.isArray(r.data) ? r.data : (r.data.showtimes || r.data || []);
+      if (!list.length) { showtimesList.innerHTML = '<div class="muted">No showtimes for this movie</div>'; return; }
+      showtimesList.innerHTML = '';
+      list.forEach(s=>{
+        const sid = s.showtime_id || s.id || '';
+        const display = (s.show_date && s.show_time) ? (s.show_date + ' ' + s.show_time) : (s.start_time || sid);
+        const div = document.createElement('div'); div.className='item';
+        const seatsCount = Array.isArray(s.seats) ? s.seats.filter(x=>!x.is_booked && !x.booked && !x.isBooked).length : '?';
+        div.innerHTML = `<div><div style="font-weight:700">${escape(display)}</div><div class="meta">Showtime ID: ${escape(sid)} — Available seats: ${escape(seatsCount)}</div></div>`;
+        const right = document.createElement('div');
+        const btn = document.createElement('button'); btn.textContent = 'View / Book'; btn.onclick = ()=> openSeatModal(s, movieTitle || '', display);
+        right.appendChild(btn); div.appendChild(right); showtimesList.appendChild(div);
+      });
+    }
+
+    // Seat modal rendering & selection
+    function renderSeatMatrix(seats){
+      seatGrid.innerHTML = '';
+      if (!Array.isArray(seats) || seats.length === 0) { seatGrid.innerHTML = '<div class="muted">No seat data</div>'; return; }
+      const rows = {}; let maxCol = 0;
+      seats.forEach(s => {
+        const row = s.row_label || s.row || (typeof s.seat_label === 'string' ? s.seat_label.replace(/\d+$/,'') : '?');
+        const num = Number(s.seat_number || s.seatNumber || (s.seat_label && s.seat_label.replace(/\D/g,'')) || 0) || 0;
+        if (!rows[row]) rows[row] = {};
+        rows[row][num] = s;
+        maxCol = Math.max(maxCol, num);
+      });
+      const sortedRows = Object.keys(rows).sort((a,b)=> a.localeCompare(b, undefined, {sensitivity:'base'}));
+      sortedRows.forEach(rk => {
+        const rowDiv = document.createElement('div'); rowDiv.className = 'seat-row';
+        const label = document.createElement('div'); label.className = 'seat-row-label'; label.textContent = rk; rowDiv.appendChild(label);
+        for (let c = 1; c <= maxCol; c++){
+          const seat = rows[rk][c]; const chip = document.createElement('div'); chip.className = 'seat-chip';
+          if (!seat) { chip.classList.add('seat-chip'); chip.textContent = '-'; chip.classList.add('muted'); chip.style.cursor='default'; }
+          else {
+            const seatLabel = seat.seat_label || (rk + String(c)); chip.textContent = seatLabel;
+            if (seat.is_booked || seat.isBooked || seat.booked || seat.status === 'booked') {
+              chip.classList.add('seat-booked'); chip.title = 'Booked';
+            } else {
+              chip.classList.add('seat-available'); chip.title = 'Available';
+              chip.addEventListener('click', ()=> toggleSeatSelection(seat, chip));
+              // store seat id on element
+              chip.dataset.seatId = seat.seat_id || seat.id || '';
+            }
+            // mark pre-selected
+            if (selectedSeatIds.includes(String(seat.seat_id || seat.id || ''))) chip.classList.add('seat-selected');
+          }
+          rowDiv.appendChild(chip);
+        }
+        seatGrid.appendChild(rowDiv);
+      });
+      updateSelectedCount();
+    }
+
+    function toggleSeatSelection(seat, el){
+      const sid = String(seat.seat_id || seat.id || '');
+      const idx = selectedSeatIds.indexOf(sid);
+      if (idx === -1) selectedSeatIds.push(sid);
+      else selectedSeatIds.splice(idx,1);
+      el.classList.toggle('seat-selected');
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount(){ selectedCount.textContent = String(selectedSeatIds.length || 0); }
+
+    function openSeatModal(showtimeObj, movieTitleText, displayLabel){
+      currentShowtime = showtimeObj;
+      selectedSeatIds = [];
+      bookingResult.innerHTML = '';
+      seatMeta.textContent = `${escape(movieTitleText)} — ${escape(displayLabel)} — Showtime ID: ${escape(String(showtimeObj.showtime_id || showtimeObj.id || ''))}`;
+      const seatsRaw = Array.isArray(showtimeObj.seats) ? showtimeObj.seats : [];
+      const seats = seatsRaw.map(s => typeof s === 'string' ? { seat_label: s, row_label: s.replace(/\d+$/,''), seat_number: Number((s.match(/\d+$/)||[''])[0]) } : s);
+      renderSeatMatrix(seats);
+      seatModal.style.display = 'flex';
+      seatModal.setAttribute('aria-hidden','false');
+    }
+
+    async function closeSeatModal(){
+      seatModal.style.display = 'none';
+      seatModal.setAttribute('aria-hidden','true');
+      seatGrid.innerHTML = '';
+      selectedSeatIds = [];
+      currentShowtime = null;
+    }
+
+    closeSeat.addEventListener('click', closeSeatModal);
+    seatModal.addEventListener('click', (e)=> { if (e.target === seatModal) closeSeatModal(); });
+
+    // Book selected seats
+    bookBtn.addEventListener('click', async ()=>{
+      if (!currentShowtime) return setMsg('No showtime selected');
+      if (!selectedSeatIds.length) return setMsg('Select at least one seat');
+      setMsg('Booking...', true);
+      const body = { showtime_id: currentShowtime.showtime_id || currentShowtime.id, seat_ids: selectedSeatIds };
+      const r = await api('/book', { method:'POST', headers: headers(), body: JSON.stringify(body) });
+      if (!r.ok) {
+        setMsg((r.data && (r.data.error||r.data.message)) || ('Booking failed ('+r.status+')'));
+        return;
+      }
+      // success — display ticket & QR
+      const ticket = (r.data && r.data.ticket) ? r.data.ticket : r.data;
+      bookingResult.innerHTML = '';
+      const box = document.createElement('div'); box.className='booking-ticket';
+      box.innerHTML = `<div><strong>Booking confirmed</strong></div>
+        <div class="meta">Booking ID: ${escape(ticket.bookingId || ticket.booking_id || '')}</div>
+        <div class="meta">Movie: ${escape(ticket.movieName||ticket.movie_name||'')}</div>
+        <div class="meta">Show: ${escape(ticket.showDate||ticket.show_date||'')} ${escape(ticket.showTime||ticket.show_time||'')}</div>
+        <div class="meta">Seats: ${(Array.isArray(ticket.seats) ? escape(ticket.seats.join(', ')) : escape(String(ticket.seats||'')))}</div>
+        <div class="meta">Amount: ${escape(String(ticket.totalAmount||ticket.amount||''))}</div>`;
+      if (ticket.hash || ticket.hashValue || ticket.hash_id) {
+        const hash = ticket.hash || ticket.hashValue || ticket.hash_id;
+        const img = document.createElement('img'); img.className='qr'; img.src = qrSrc(hash, 220); img.alt='QR';
+        box.appendChild(img);
+        box.innerHTML += `<div class="muted">Show this QR at entry</div>`;
+      }
+      bookingResult.appendChild(box);
+      setMsg('Booking successful', true);
+      lastAction.textContent = 'Booked ' + (Array.isArray(ticket.seats)? ticket.seats.join(', '): '') + ' — ID ' + (ticket.bookingId||ticket.booking_id||'');
+      // Refresh bookings and showtimes
+      await loadBookings();
+      if (currentShowtime && currentShowtime.movie_id) await loadShowtimesFor(currentShowtime.movie_id);
+      // keep modal open to show QR, or close automatically:
+      // closeSeatModal(); 
+    });
+
+    // Load bookings
+    async function loadBookings(){
+      bookingsList.textContent = 'Loading...';
+      const r = await api('/bookings', { method:'GET', headers: headers() });
+      if (!r.ok) { bookingsList.textContent = 'Failed to load bookings'; return; }
+      const list = Array.isArray(r.data) ? r.data : (r.data.bookings || r.data || []);
+      if (!list.length) { bookingsList.innerHTML = '<div class="muted">No bookings yet</div>'; return; }
+      bookingsList.innerHTML = '';
+      list.slice(0,50).forEach(b=>{
+        const id = b.booking_id || b.bookingId || b.id || '';
+        const div = document.createElement('div'); div.className='item';
+        const seats = Array.isArray(b.seats) ? b.seats.join(', ') : (typeof b.seats === 'string' ? b.seats : '');
+        div.innerHTML = `<div><div style="font-weight:700">${escape(String(id))}</div><div class="meta">Movie: ${escape(b.movie_name||b.movieName||'')} — Amount: ${escape(String(b.amount||b.total||''))}</div><div class="meta">Seats: ${escape(seats)}</div></div>`;
+        const right = document.createElement('div');
+        const btnView = document.createElement('button'); btnView.textContent = 'View Ticket'; btnView.onclick = ()=> viewTicket(b);
+        right.appendChild(btnView);
+        div.appendChild(right);
+        bookingsList.appendChild(div);
+      });
+    }
+
+    function viewTicket(b){
+      const hash = b.hash || b.hashValue || b.hash_id;
+      const popup = document.createElement('div'); popup.className='panel'; popup.style.position='fixed'; popup.style.left='50%'; popup.style.top='50%'; popup.style.transform='translate(-50%,-50%)'; popup.style.zIndex='2000';
+      popup.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><h3>Ticket</h3><button id="close-popup" class="ghost">Close</button></div>
+        <div class="booking-ticket"><div><strong>Booking ID:</strong> ${escape(b.booking_id||b.bookingId||'')}</div>
+        <div class="meta">Movie: ${escape(b.movie_name||b.movieName||'')}</div>
+        <div class="meta">Seats: ${escape(Array.isArray(b.seats)? b.seats.join(', '): b.seats || '')}</div>
+        <div class="meta">Amount: ${escape(String(b.amount||b.total||''))}</div></div>`;
+      if (hash) {
+        const img = document.createElement('img'); img.src = qrSrc(hash, 260); img.alt='QR'; img.className='qr';
+        popup.appendChild(img);
+      }
+      document.body.appendChild(popup);
+      document.getElementById('close-popup').addEventListener('click', ()=> document.body.removeChild(popup));
+    }
+
+    logout.addEventListener('click', ()=> { localStorage.removeItem('token'); localStorage.removeItem('role'); location.href='index.html'; });
+
+    // init
+    (async function init(){ await loadMovies(); await loadBookings(); })();
+
+    // expose for debugging
+    window._api = api;
+
+  })();
+  </script>
+</body>
+</html>
+  <script>
+(function(){
+  const API_BASE = "https://5rylnhcn8k.execute-api.us-east-1.amazonaws.com";
+  const token = localStorage.getItem("token");
+  const role = localStorage.getItem("role");
+  if (!token || role !== "user") { location.href = "index.html"; return; }
+
+  const el = id => document.getElementById(id);
+  const moviesList = el('movies-list'), showtimesList = el('showtimes-list');
+  const bookingsList = el('bookings-list'), lastAction = el('last-action'), msg = el('msg');
+  const seatModal = el('seat-modal'), seatGrid = el('seat-grid'), seatMeta = el('seat-meta');
+  const selectedCount = el('selected-count'), bookBtn = el('book-btn'), closeSeat = el('close-seat'), bookingResult = el('booking-result');
+  const logout = el('logout');
+
+  function setMsg(t, ok){ msg.textContent = t||''; msg.style.color = ok ? 'var(--ok)' : 'var(--danger)'; if(t) setTimeout(()=>{ if(msg.textContent===t) msg.textContent=''; },4000); }
+  function headers(){ return { 'Content-Type':'application/json', 'Authorization':'Bearer ' + token }; }
+  async function api(path, opts){ const res = await fetch(API_BASE + path, opts); const text = await res.text().catch(()=>''); let data = text; try { data = JSON.parse(text || '{}'); } catch(e){} return { ok: res.ok, status: res.status, data }; }
+
+  // Helpers
+  function escape(s){ if (s===null||s===undefined) return ''; return String(s).replace(/[&<>"'`=\/]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'})[ch]); }
+  function qrSrc(payload, size=200){ return 'https://chart.googleapis.com/chart?cht=qr&chs=' + size + 'x' + size + '&chl=' + encodeURIComponent(payload); }
+
+  // 🧭 Format date & time
+  function formatDateTime(dateStr, timeStr) {
+    try {
+      const d = new Date(dateStr);
+      const formattedDate = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      if (!timeStr) return formattedDate;
+      const t = timeStr.includes(':') ? timeStr : timeStr + ':00';
+      const [hh, mm] = t.split(':');
+      const fake = new Date();
+      fake.setHours(hh, mm);
+      const formattedTime = fake.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      return `${formattedDate} — ${formattedTime}`;
+    } catch {
+      return `${dateStr} ${timeStr || ''}`;
+    }
+  }
+
+  let currentShowtime = null;
+  let selectedSeatIds = [];
+
+  // Load movies
+  async function loadMovies(){
+    moviesList.textContent = 'Loading...';
+    const r = await api('/movies', { method:'GET', headers: headers() });
+    if (!r.ok) { moviesList.textContent = 'Failed to load movies'; return; }
+    const movies = Array.isArray(r.data) ? r.data : (r.data.movies || []);
+    if (!movies.length) { moviesList.innerHTML = '<div class="muted">No movies available</div>'; return; }
+    moviesList.innerHTML = '';
+    movies.forEach(m=>{
+      const id = m.movie_id || m.id || '';
+      const title = m.title || m.name || '(untitled)';
+      const div = document.createElement('div'); div.className='item';
+      div.innerHTML = `<div><div style="font-weight:700">${escape(title)}</div><div class="meta">Price: ${escape(m.price ?? m.base_price ?? '-')}</div></div>`;
+      const right = document.createElement('div');
+      const btn = document.createElement('button'); btn.textContent = 'Showtimes'; btn.onclick = ()=> loadShowtimesFor(id, title);
+      right.appendChild(btn); div.appendChild(right); moviesList.appendChild(div);
+    });
+  }
+
+  // Load showtimes for movie (movie_id or title)
+  async function loadShowtimesFor(movieId, movieTitle){
+    showtimesList.textContent = 'Loading showtimes...';
+    if (!movieId) { showtimesList.textContent = 'Movie id missing'; return; }
+    const r = await api('/showtimes/' + encodeURIComponent(movieId), { method:'GET', headers: headers() });
+    if (!r.ok) { showtimesList.textContent = (r.data && (r.data.error||r.data.message)) || 'Failed to load showtimes'; return; }
+    const list = Array.isArray(r.data) ? r.data : (r.data.showtimes || r.data || []);
+    if (!list.length) { showtimesList.innerHTML = '<div class="muted">No showtimes for this movie</div>'; return; }
+
+    showtimesList.innerHTML = '';
+    list.forEach(s=>{
+      const sid = s.showtime_id || s.id || '';
+      const display = formatDateTime(s.show_date, s.show_time);
+      const div = document.createElement('div'); div.className='item';
+      const seatsCount = Array.isArray(s.seats) ? s.seats.filter(x=>!x.is_booked && !x.booked && !x.isBooked).length : '?';
+      div.innerHTML = `<div><div style="font-weight:700">${escape(display)}</div><div class="meta">Showtime ID: ${escape(sid)} — Available seats: ${escape(seatsCount)}</div></div>`;
+      const right = document.createElement('div');
+      const btn = document.createElement('button'); btn.textContent = 'View / Book'; btn.onclick = ()=> openSeatModal(s, movieTitle || '', display);
+      right.appendChild(btn); div.appendChild(right); showtimesList.appendChild(div);
+    });
+  }
+
+  // Seat modal rendering (unchanged)
+  function renderSeatMatrix(seats){
+    seatGrid.innerHTML = '';
+    if (!Array.isArray(seats) || seats.length === 0) { seatGrid.innerHTML = '<div class="muted">No seat data</div>'; return; }
+    const rows = {}; let maxCol = 0;
+    seats.forEach(s => {
+      const row = s.row_label || s.row || (typeof s.seat_label === 'string' ? s.seat_label.replace(/\d+$/,'') : '?');
+      const num = Number(s.seat_number || s.seatNumber || (s.seat_label && s.seat_label.replace(/\D/g,'')) || 0) || 0;
+      if (!rows[row]) rows[row] = {};
+      rows[row][num] = s;
+      maxCol = Math.max(maxCol, num);
+    });
+    const sortedRows = Object.keys(rows).sort();
+    sortedRows.forEach(rk => {
+      const rowDiv = document.createElement('div'); rowDiv.className = 'seat-row';
+      const label = document.createElement('div'); label.className = 'seat-row-label'; label.textContent = rk; rowDiv.appendChild(label);
+      for (let c = 1; c <= maxCol; c++){
+        const seat = rows[rk][c]; const chip = document.createElement('div'); chip.className = 'seat-chip';
+        if (!seat) { chip.textContent = '-'; chip.classList.add('muted'); chip.style.cursor='default'; }
+        else {
+          const seatLabel = seat.seat_label || (rk + String(c)); chip.textContent = seatLabel;
+          if (seat.is_booked || seat.isBooked || seat.booked || seat.status === 'booked') {
+            chip.classList.add('seat-booked');
+          } else {
+            chip.classList.add('seat-available');
+            chip.addEventListener('click', ()=> toggleSeatSelection(seat, chip));
+            chip.dataset.seatId = seat.seat_id || seat.id || '';
+          }
+          if (selectedSeatIds.includes(String(seat.seat_id || seat.id || ''))) chip.classList.add('seat-selected');
+        }
+        rowDiv.appendChild(chip);
+      }
+      seatGrid.appendChild(rowDiv);
+    });
+    updateSelectedCount();
+  }
+
+  function toggleSeatSelection(seat, el){
+    const sid = String(seat.seat_id || seat.id || '');
+    const idx = selectedSeatIds.indexOf(sid);
+    if (idx === -1) selectedSeatIds.push(sid);
+    else selectedSeatIds.splice(idx,1);
+    el.classList.toggle('seat-selected');
+    updateSelectedCount();
+  }
+
+  function updateSelectedCount(){ selectedCount.textContent = String(selectedSeatIds.length || 0); }
+
+  function openSeatModal(showtimeObj, movieTitleText, displayLabel){
+    currentShowtime = showtimeObj;
+    selectedSeatIds = [];
+    bookingResult.innerHTML = '';
+    seatMeta.textContent = `${escape(movieTitleText)} — ${escape(displayLabel)} — Showtime ID: ${escape(String(showtimeObj.showtime_id || showtimeObj.id || ''))}`;
+    const seatsRaw = Array.isArray(showtimeObj.seats) ? showtimeObj.seats : [];
+    const seats = seatsRaw.map(s => typeof s === 'string' ? { seat_label: s, row_label: s.replace(/\d+$/,''), seat_number: Number((s.match(/\d+$/)||[''])[0]) } : s);
+    renderSeatMatrix(seats);
+    seatModal.style.display = 'flex';
+    seatModal.setAttribute('aria-hidden','false');
+  }
+
+  async function closeSeatModal(){
+    seatModal.style.display = 'none';
+    seatModal.setAttribute('aria-hidden','true');
+    seatGrid.innerHTML = '';
+    selectedSeatIds = [];
+    currentShowtime = null;
+  }
+
+  closeSeat.addEventListener('click', closeSeatModal);
+  seatModal.addEventListener('click', (e)=> { if (e.target === seatModal) closeSeatModal(); });
+
+  // Book seats (unchanged except formatted time)
+  bookBtn.addEventListener('click', async ()=>{
+    if (!currentShowtime) return setMsg('No showtime selected');
+    if (!selectedSeatIds.length) return setMsg('Select at least one seat');
+    setMsg('Booking...', true);
+    const body = { showtime_id: currentShowtime.showtime_id || currentShowtime.id, seat_ids: selectedSeatIds };
+    const r = await api('/book', { method:'POST', headers: headers(), body: JSON.stringify(body) });
+    if (!r.ok) return setMsg((r.data && (r.data.error||r.data.message)) || ('Booking failed ('+r.status+')'));
+    const ticket = (r.data && r.data.ticket) ? r.data.ticket : r.data;
+    bookingResult.innerHTML = '';
+    const box = document.createElement('div'); box.className='booking-ticket';
+    box.innerHTML = `<div><strong>Booking confirmed</strong></div>
+      <div class="meta">Booking ID: ${escape(ticket.bookingId || ticket.booking_id || '')}</div>
+      <div class="meta">Movie: ${escape(ticket.movieName||ticket.movie_name||'')}</div>
+      <div class="meta">Show: ${escape(formatDateTime(ticket.showDate||ticket.show_date, ticket.showTime||ticket.show_time))}</div>
+      <div class="meta">Seats: ${(Array.isArray(ticket.seats) ? escape(ticket.seats.join(', ')) : escape(String(ticket.seats||'')))}</div>
+      <div class="meta">Amount: ${escape(String(ticket.totalAmount||ticket.amount||''))}</div>`;
+    if (ticket.hash || ticket.hashValue || ticket.hash_id) {
+      const hash = ticket.hash || ticket.hashValue || ticket.hash_id;
+      const img = document.createElement('img'); img.className='qr'; img.src = qrSrc(hash, 220); img.alt='QR';
+      box.appendChild(img);
+      box.innerHTML += `<div class="muted">Show this QR at entry</div>`;
+    }
+    bookingResult.appendChild(box);
+    setMsg('Booking successful', true);
+    lastAction.textContent = 'Booked ' + (Array.isArray(ticket.seats)? ticket.seats.join(', '): '') + ' — ID ' + (ticket.bookingId||ticket.booking_id||'');
+    await loadBookings();
+  });
+
+  // Load bookings (unchanged)
+  async function loadBookings(){
+    bookingsList.textContent = 'Loading...';
+    const r = await api('/bookings', { method:'GET', headers: headers() });
+    if (!r.ok) { bookingsList.textContent = 'Failed to load bookings'; return; }
+    const list = Array.isArray(r.data) ? r.data : (r.data.bookings || r.data || []);
+    if (!list.length) { bookingsList.innerHTML = '<div class="muted">No bookings yet</div>'; return; }
+    bookingsList.innerHTML = '';
+    list.slice(0,50).forEach(b=>{
+      const id = b.booking_id || b.bookingId || b.id || '';
+      const div = document.createElement('div'); div.className='item';
+      const seats = Array.isArray(b.seats) ? b.seats.join(', ') : (typeof b.seats === 'string' ? b.seats : '');
+      const formatted = formatDateTime(b.show_date||b.showDate, b.show_time||b.showTime);
+      div.innerHTML = `<div><div style="font-weight:700">${escape(String(id))}</div><div class="meta">${escape(formatted)} — ${escape(b.movie_name||b.movieName||'')}</div><div class="meta">Seats: ${escape(seats)} — Amount: ${escape(String(b.amount||b.total||''))}</div></div>`;
+      const right = document.createElement('div');
+      const btnView = document.createElement('button'); btnView.textContent = 'View Ticket'; btnView.onclick = ()=> viewTicket(b);
+      right.appendChild(btnView);
+      div.appendChild(right);
+      bookingsList.appendChild(div);
+    });
+  }
+
+  function viewTicket(b){
+    const hash = b.hash || b.hashValue || b.hash_id;
+    const popup = document.createElement('div'); popup.className='panel'; popup.style.position='fixed'; popup.style.left='50%'; popup.style.top='50%'; popup.style.transform='translate(-50%,-50%)'; popup.style.zIndex='2000';
+    const formatted = formatDateTime(b.show_date||b.showDate, b.show_time||b.showTime);
+    popup.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><h3>Ticket</h3><button id="close-popup" class="ghost">Close</button></div>
+      <div class="booking-ticket"><div><strong>Booking ID:</strong> ${escape(b.booking_id||b.bookingId||'')}</div>
+      <div class="meta">${escape(formatted)}</div>
+      <div class="meta">Movie: ${escape(b.movie_name||b.movieName||'')}</div>
+      <div class="meta">Seats: ${escape(Array.isArray(b.seats)? b.seats.join(', '): b.seats || '')}</div>
+      <div class="meta">Amount: ${escape(String(b.amount||b.total||''))}</div></div>`;
+    if (hash) {
+      const img = document.createElement('img'); img.src = qrSrc(hash, 260); img.alt='QR'; img.className='qr';
+      popup.appendChild(img);
+    }
+    document.body.appendChild(popup);
+    document.getElementById('close-popup').addEventListener('click', ()=> document.body.removeChild(popup));
+  }
+
+  logout.addEventListener('click', ()=> { localStorage.removeItem('token'); localStorage.removeItem('role'); location.href='index.html'; });
+
+  (async function init(){ await loadMovies(); await loadBookings(); })();
+})();
+</script>
+
+</body>
+</html>
