@@ -4,11 +4,11 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
 const dbConfig = {
-  host: "mpcc.cvsessvelkov.us-east-1.rds.amazonaws.com",
+  host: "",
   port: 3306,
   user: "admin",
-  password: "Mpccmtg3",
-  database: "mpcc"
+  password: "",
+  database: ""
 };
 
 const JWT_SECRET = "YourSuperSecretKey123!";
@@ -101,13 +101,20 @@ export async function handler(event) {
 
       if (path === "/movies" && method === "POST") {
         if (user.role !== "admin") return response(403, { error: "Forbidden" });
+        
         const body = JSON.parse(event.body);
+      
+        // Ensure base_price is a number, default to 0 if missing
+        const basePrice = body.base_price ? Number(body.base_price) : 50;
+      
         await connection.execute(
-          "INSERT INTO movies (title, description) VALUES (?, ?)",
-          [body.title, body.description]
+          "INSERT INTO movies (title, description, base_price) VALUES (?, ?, ?)",
+          [body.title, body.description, basePrice]
         );
-        return response(200, { message: "Movie added" });
+      
+        return response(200, { message: "Movie added with base price" });
       }
+      
 
       // ---- Delete Movie (admin only) ----
 if (path.startsWith("/movies/") && method === "DELETE") {
@@ -165,126 +172,62 @@ if (path.startsWith("/showtimes/") && method === "DELETE") {
 
 
       // ---- Showtimes ----
-      if (path.startsWith("/showtimes/") && method === "GET") {
-        const movieName = decodeURIComponent(path.split("/")[2]); // Get movie name from URL
-      
-        // Find movie_id
-        const [movieRows] = await connection.execute(
-          "SELECT movie_id FROM movies WHERE title = ?",
-          [movieName]
-        );
-      
-        if (movieRows.length === 0) {
-          return response(404, { error: `Movie '${movieName}' not found` });
-        }
-      
-        const movie_id = movieRows[0].movie_id;
-      
-        // Get all showtimes for that movie
-        const [showtimeRows] = await connection.execute(
-          "SELECT showtime_id, show_date, show_time FROM showtimes WHERE movie_id = ? ORDER BY show_date, show_time",
-          [movie_id]
-        );
-      
-        if (showtimeRows.length === 0) {
-          return response(404, { error: `No showtimes found for movie '${movieName}'` });
-        }
-      
-        // Optionally, include seat info for each showtime
-        const showtimesWithSeats = [];
-        for (const showtime of showtimeRows) {
-          const [seatRows] = await connection.execute(
-            "SELECT seat_id, row_label, seat_number, is_booked FROM seats WHERE showtime_id = ? ORDER BY row_label, seat_number",
-            [showtime.showtime_id]
-          );
-      
-          function rowToCategory(row) {
-            if (["A","B"].includes(row)) return "VIP";
-            if (["C","D"].includes(row)) return "Balcony";
-            if (["E","F"].includes(row)) return "Premium";
-            if (["G","H"].includes(row)) return "Normal";
-            if (["I","J"].includes(row)) return "Front";
-            return "Unknown";
-          }
-      
-          const seatsWithCategory = seatRows.map(s => ({
-            ...s,
-            category: rowToCategory(s.row_label),
-            seat_label: `${s.row_label}${s.seat_number}`
-          }));
-      
-          showtimesWithSeats.push({
-            showtime_id: showtime.showtime_id,
-            show_date: showtime.show_date,
-            show_time: showtime.show_time,
-            seats: seatsWithCategory
-          });
-        }
-      
-        return response(200, showtimesWithSeats);
-      }
       if (path === "/showtimes" && method === "POST") {
         if (user.role !== "admin") return response(403, { error: "Forbidden" });
-
+      
         const body = JSON.parse(event.body || "{}");
-
-        // require movie_id (or try to resolve via title/name)
+      
+        // --- Resolve movie_id ---
         let movie_id = body.movie_id || null;
         if (!movie_id) {
           const title = body.movie_title || body.movie_name;
           if (title) {
-            const [mrows] = await connection.execute("SELECT movie_id FROM movies WHERE title = ?", [title]);
+            const [mrows] = await connection.execute(
+              "SELECT movie_id FROM movies WHERE title = ?",
+              [title]
+            );
             if (mrows.length) movie_id = mrows[0].movie_id;
           }
         }
         if (!movie_id) return response(400, { error: "movie_id (or valid movie_title/movie_name) is required" });
-
-        // require show_date and show_time (do not auto-derive unless provided)
+      
+        // --- Determine show_date and show_time ---
         let show_date = body.show_date || null;
         let show_time = body.show_time || null;
-
-        // optionally accept start_time and derive if caller provided it explicitly
+      
         if ((!show_date || !show_time) && body.start_time) {
           const dt = new Date(body.start_time);
           if (!isNaN(dt.getTime())) {
-            show_date = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-            show_time = `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+            show_date = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+            show_time = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
           }
         }
-
+      
         if (!show_date || !show_time) {
           return response(400, { error: "show_date and show_time are required" });
         }
-
-        const basePrice = (body.price === undefined || body.price === null) ? null : Number(body.price);
-
+      
+        // --- Insert showtime ---
         const [ins] = await connection.execute(
-          "INSERT INTO showtimes (movie_id, show_date, show_time, base_price) VALUES (?, ?, ?, ?)",
-          [movie_id, show_date, show_time, basePrice]
+          "INSERT INTO showtimes (movie_id, show_date, show_time) VALUES (?, ?, ?)",
+          [movie_id, show_date, show_time]
         );
         const showtimeId = ins.insertId;
-
-        // insert seats if provided (array of strings or objects)
-        if (Array.isArray(body.seats) && body.seats.length) {
-          const seatStmt = "INSERT INTO seats (showtime_id, row_label, seat_number, seat_label, is_booked) VALUES (?, ?, ?, ?, ?)";
-          for (const s of body.seats) {
-            let row_label = null, seat_number = null, seat_label = null;
-            if (typeof s === "string") {
-              seat_label = s;
-              row_label = s.replace(/\d+$/,'') || null;
-              seat_number = Number((s.match(/\d+$/)||[''])[0]) || null;
-            } else if (typeof s === "object" && s !== null) {
-              row_label = s.row_label || s.row || null;
-              seat_number = s.seat_number || s.seatNumber || null;
-              seat_label = s.seat_label || (row_label && seat_number ? String(row_label) + String(seat_number) : null);
-            }
-            if (!row_label || !seat_number) continue;
-            await connection.execute(seatStmt, [showtimeId, row_label, seat_number, seat_label, false]);
+      
+        // --- Generate seats automatically ---
+        const seatStmt = "INSERT INTO seats (showtime_id, row_label, seat_number, is_booked) VALUES (?, ?, ?, ?)";
+        const rows = ["A","B","C","D","E","F","G","H","I","J"];
+        const seatsPerRow = 10;
+      
+        for (const row of rows) {
+          for (let num = 1; num <= seatsPerRow; num++) {
+            await connection.execute(seatStmt, [showtimeId, row, num, false]);
           }
         }
-
-        return response(200, { message: "Showtime added", showtime_id: showtimeId });
+      
+        return response(200, { message: "Showtime added with auto-generated seats", showtime_id: showtimeId });
       }
+      
       
       
 
